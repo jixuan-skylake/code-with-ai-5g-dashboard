@@ -84,6 +84,10 @@
   var valEl   = document.getElementById("val");
   var lastSent = null;       // dedupe identical values across rerenders.
   var dragging = false;      // suppress applyArgs writes during active drag.
+  var SEND_THROTTLE_MS = 120;
+  var pendingValue = null;
+  var sendTimer = null;
+  var lastFlushAt = 0;
   var resizeOb;
 
   // -------- streamlit bridge ------------------------------------------------
@@ -101,6 +105,36 @@
       value: { low: low, high: high },
       dataType: "json"
     });
+  }
+
+  function flushValue() {
+    if (!pendingValue) return;
+    var next = pendingValue;
+    pendingValue = null;
+    if (sendTimer) {
+      window.clearTimeout(sendTimer);
+      sendTimer = null;
+    }
+    lastFlushAt = Date.now();
+    sendValue(next.low, next.high);
+  }
+
+  function queueValue(low, high, immediate) {
+    pendingValue = { low: low, high: high };
+    if (immediate) {
+      flushValue();
+      return;
+    }
+
+    var now = Date.now();
+    var wait = SEND_THROTTLE_MS - (now - lastFlushAt);
+    if (wait <= 0) {
+      flushValue();
+      return;
+    }
+    if (!sendTimer) {
+      sendTimer = window.setTimeout(flushValue, wait);
+    }
   }
 
   function setFrameHeight() {
@@ -129,7 +163,7 @@
     var hi = Number(hiEl.value);
     if (lo > hi) { var t = lo; lo = hi; hi = t; }
     paint(lo, hi);
-    sendValue(lo, hi);
+    queueValue(lo, hi, false);
   }
 
   function applyArgs(a) {
@@ -172,11 +206,18 @@
   // outside the iframe" cases (browsers fire mouseup on window when the
   // pointer leaves the input during a drag).
   function startDrag() { dragging = true; }
-  function endDrag()   { dragging = false; }
+  function endDrag() {
+    dragging = false;
+    var lo = Number(loEl.value);
+    var hi = Number(hiEl.value);
+    if (lo > hi) { var t = lo; lo = hi; hi = t; }
+    queueValue(lo, hi, true);
+  }
   [loEl, hiEl].forEach(function (el) {
     el.addEventListener("pointerdown", startDrag);
     el.addEventListener("mousedown", startDrag);
     el.addEventListener("touchstart", startDrag, { passive: true });
+    el.addEventListener("change", endDrag);
     el.addEventListener("pointerup", endDrag);
     el.addEventListener("mouseup", endDrag);
     el.addEventListener("touchend", endDrag);

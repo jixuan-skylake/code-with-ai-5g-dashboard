@@ -231,6 +231,9 @@ with st.sidebar:
     chart_kind = st.radio(
         "频段统计图", ("柱状图", "饼图"), index=0, horizontal=True
     )
+    terminal_chart_kind = st.radio(
+        "终端统计图", ("柱状图", "饼图"), index=1, horizontal=True
+    )
 
     st.divider()
     st.caption(
@@ -432,14 +435,26 @@ with right:
         .reset_index(name="数量")
         .sort_values("数量", ascending=False)
     )
-    fig2 = px.pie(
-        term_counts,
-        names="TerminalType",
-        values="数量",
-        hole=0.45,
-        template="plotly_dark",
-        color_discrete_sequence=px.colors.sequential.Tealgrn,
-    )
+    if terminal_chart_kind == "柱状图":
+        fig2 = px.bar(
+            term_counts,
+            x="TerminalType",
+            y="数量",
+            text="数量",
+            color="TerminalType",
+            template="plotly_dark",
+            color_discrete_sequence=px.colors.sequential.Tealgrn,
+        )
+        fig2.update_traces(textposition="outside")
+    else:
+        fig2 = px.pie(
+            term_counts,
+            names="TerminalType",
+            values="数量",
+            hole=0.45,
+            template="plotly_dark",
+            color_discrete_sequence=px.colors.sequential.Tealgrn,
+        )
     fig2.update_layout(margin=dict(l=10, r=10, t=20, b=10), height=320)
     st.plotly_chart(fig2, use_container_width=True)
 

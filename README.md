@@ -34,7 +34,7 @@
 - **作战室视觉**：暗色科技底 + 绿/红信号语义 + 渐变 KPI 卡 + 脉冲在线
   指示灯 + 标题 fade-in，全部纯 CSS（写在 `st.markdown` 里），无外部
   前端依赖。
-- **多图联动**：频段柱状/饼图、终端类型环图、RSRP 直方图、RSRP×速率
+- **多图联动**：频段柱状/饼图、终端类型柱状/饼图、RSRP 直方图、RSRP×速率
   散点图，全部跟随筛选实时刷新。
 - **工程化**
   - 核心逻辑拆到 `src/`（`data_loader / coloring / filters / heights`）
@@ -42,7 +42,7 @@
   - 自研 Streamlit custom component `src/components/live_range.py` +
     `frontend/live_range_slider/index.html`（纯 vanilla JS / CSS，不依赖
     外部 CDN）解决 `st.slider` 不能拖动中实时回传的根因。
-  - **53 条 pytest 单元测试** 100% 通过，覆盖：CSV 加载与列校验、RSRP
+  - **55 条 pytest 单元测试** 100% 通过，覆盖：CSV 加载与列校验、RSRP
     分级与 NaN 兜底、Sidebar 多种筛选组合、3D 高度归一化的边界情况、
     `live_range_slider` 的值规整契约 + HTML 防回归 + 拖动后手柄持久化
     （`_resolve_initial_value`）。
@@ -77,7 +77,7 @@ streamlit run app.py --server.address 127.0.0.1
 
 ```bash
 pip install -r requirements.txt   # 含 pytest
-pytest                             # 期望输出：53 passed
+pytest                             # 期望输出：55 passed
 ```
 
 测试文件位于 `tests/`：
@@ -88,7 +88,8 @@ pytest                             # 期望输出：53 passed
 | `tests/test_coloring.py`    | RSRP 四档分级，NaN 兜底，`attach_color_columns` 不修改原 df |
 | `tests/test_filters.py`     | Band / RSRP / Terminal / Speed 单条与组合筛选，空多选语义 |
 | `tests/test_heights.py`     | 端点映射、线性插值、常量退化、NaN 输入、非法 bound 报错 |
-| `tests/test_live_range.py`  | 自研 `live_range_slider` 值规整契约 + HTML 防回归（`input` 事件、`setComponentValue`、不引外部 CDN）+ sticky 状态解析（`_resolve_initial_value`：prior 优先、bounds clamp）+ JS 拖动状态防御 |
+| `tests/test_live_range.py`  | 自研 `live_range_slider` 值规整契约 + HTML 防回归（`input` 事件、节流回传、`setComponentValue`、不引外部 CDN）+ sticky 状态解析（`_resolve_initial_value`：prior 优先、bounds clamp）+ JS 拖动状态防御 |
+| `tests/test_app_contract.py` | App 静态 UI 契约：终端类型构成必须提供柱状图 / 饼图切换 |
 
 进阶端到端验证（需要先启动 Streamlit）：
 
@@ -207,6 +208,7 @@ custom component 解决，分两个 bug：
 |---|---|---|
 | RSRP / Download slider 拖动时 map / KPI / 图表不刷新 | `st.slider` 是 BaseWeb 组件，只在 change-end 发 `widgetStateRequest` | `frontend/live_range_slider/index.html` 用 `<input type="range">` + `'input'` 事件 + `streamlit:setComponentValue` postMessage 协议，每帧把当前值送回 Python |
 | 数据按拖动值更新，但 slider 手柄在 rerun 后弹回初始最大值 | 每次 rerun，Python 用固定 `value=(min, max)` 调 `live_range_slider`，iframe `applyArgs` 又把 input.value 写回初始值 | Python 端 `_resolve_initial_value` 优先从 `st.session_state[key]` 读最近 commit 值送给 iframe；JS 端在 `dragging=true` 时跳过 `applyArgs` 的 input 写入 |
+| 拖动时地图更新发卡 | 每个原始 `input` 都触发 Streamlit 全量 rerun，pydeck / plotly 重绘过密 | JS 端用 120ms 节流队列合并连续输入，松手时立即 flush 最终值；仍保持拖动中更新，但减少重绘风暴 |
 
 可执行验证（覆盖三个契约：input 事件 / KPI 跟随 / 手柄不弹回）：
 

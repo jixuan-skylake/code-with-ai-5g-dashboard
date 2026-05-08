@@ -481,4 +481,52 @@ HEAD          -> <new>    （sticky-state 修复）
 
 ---
 
-*— Claude Code (Opus 4.7) · 2026-05-08*
+## 10. 后续优化 #3：终端类型图表切换与 slider 节流
+
+### 10.1 用户追加要求
+
+用户提出两点体验优化：
+
+1. 「终端类型构成是不是也可以在柱状图和饼图之间切换」
+2. 「拖动滑条的时候地图更新不是那么流畅，还有点卡」
+
+### 10.2 根因与取舍
+
+- 终端类型构成原先固定为环形饼图，而频段统计已经支持柱状图 / 饼图切换；
+  两个概览图的交互能力不一致。
+- `live_range_slider` 修复后每个 HTML `input` 事件都会 `setComponentValue`，
+  而每次 component value 都会触发一次 Streamlit 全量 rerun；pydeck 地图和
+  plotly 图表随之重绘，拖动时容易形成重绘风暴。
+
+优化策略不是退回「松手后更新」，而是在前端组件中加入 120ms 节流队列：
+拖动中仍持续回传，但合并过密的原始浏览器事件；松手时立即 flush 最终值，
+保证筛选结果不会滞后。
+
+### 10.3 实现
+
+| 文件 | 改动 |
+|---|---|
+| `app.py` | sidebar 新增 `terminal_chart_kind = st.radio("终端统计图", ("柱状图", "饼图"))`；终端类型构成根据该值渲染 `px.bar` 或 `px.pie` |
+| `frontend/live_range_slider/index.html` | 新增 `SEND_THROTTLE_MS = 120`、`queueValue`、`flushValue`、`setTimeout` 节流；`change/pointerup/mouseup/touchend` 立即 flush |
+| `tests/test_live_range.py` | 新增 HTML 契约测试：必须存在节流常量、队列函数、timeout 与 flush |
+| `tests/test_app_contract.py` | 新增 app 静态契约测试：终端类型构成必须提供柱状图 / 饼图切换 |
+
+### 10.4 验证
+
+```
+pytest
+# 55 passed
+
+DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
+# [PASS] live drag updates confirmed end-to-end
+```
+
+页面实测信号：
+
+- sidebar 内出现「终端统计图」radio。
+- 页面中「柱状图」和「饼图」各出现 2 组：频段统计图 + 终端统计图。
+- live drag 验证仍然通过：KPI 在拖动中变化，iframe 手柄不弹回。
+
+---
+
+*— Claude Code (Opus 4.7) + Codex · 2026-05-08*

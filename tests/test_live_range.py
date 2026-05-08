@@ -92,6 +92,19 @@ class TestFrontendHTMLContract:
             "frontend must call setComponentValue to push live values to Python"
         )
 
+    def test_live_updates_are_throttled_to_avoid_rerun_storms(self):
+        """Each Streamlit component value causes a full Python rerun.
+
+        The frontend should still update during drag, but it must throttle
+        the postMessage stream so pydeck / plotly are not redrawn for every
+        raw browser input event.
+        """
+        content = FRONTEND_HTML.read_text(encoding="utf-8")
+        assert "SEND_THROTTLE_MS" in content
+        assert "queueValue" in content
+        assert "setTimeout" in content
+        assert "flushValue" in content
+
     def test_announces_component_ready(self):
         content = FRONTEND_HTML.read_text(encoding="utf-8")
         assert "streamlit:componentReady" in content, (
