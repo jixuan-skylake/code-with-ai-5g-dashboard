@@ -272,4 +272,115 @@ python3 scripts/take_screenshots.py
 
 ---
 
+## 8. 后续修复：拖动筛选时未实时更新（用户后续追加要求）
+
+### 8.1 用户的 bug 报告（原文）
+
+> 用户刚刚发现一个交互缺陷：进阶关卡要求『拖动筛选器时，右侧地图和图表必须实时更新』，但当前 app.py 使用 Streamlit 原生 st.slider，实际行为是在松开拖动条以后才 rerun 更新地图/图表。
+
+### 8.2 系统化根因分析
+
+不直接猜，先把 Streamlit 的事件模型摸清：
+
+- `st.slider` 在前端是 BaseWeb 的 `Slider` React 组件。
+- 该组件只在 **change-end**（鼠标 mouseup / blur）时通过 WebSocket 发送
+  `widgetStateRequest` —— 这条消息才是触发 Python 脚本 rerun 的信号。
+- 拖动过程中虽然组件内部 state 在变，但是 **不会** 通过 WebSocket 通知
+  Python 端，因此 map / KPI / charts 在松手前都看不到中间值。
+- 这是 Streamlit 已知行为；社区里有大量 issue（仍未上游修复），通常推荐
+  做法是写一个 custom component。
+
+### 8.3 修复方案
+
+写一个本地 Streamlit custom component，绕过 BaseWeb 的事件契约：
+
+- `frontend/live_range_slider/index.html`：纯 vanilla JS / CSS。两个
+  `<input type="range">` 叠在一条轨道上做双滑块；监听 `input` 事件
+  （拖动过程中每帧都会触发，区别于 `change` 仅 mouseup 才触发）。
+- 通过 `window.parent.postMessage({ type: 'streamlit:setComponentValue', ... })`
+  把当前 `{low, high}` 直接推给 Streamlit 父窗口。Streamlit 收到后立刻
+  重新执行 Python 脚本，下游的 `apply_filters / pydeck / KPI` 自然跟着刷新。
+- `src/components/live_range.py`：用 `streamlit.components.v1.declare_component(path=...)`
+  把上面的 HTML 注册为可重复调用的组件，并提供 `_normalize_range`
+  容错函数（处理 dict / list / tuple 三种 payload，clamp 到合法范围，自动
+  交换反向边界）。
+- 不依赖任何外部 CDN，所需 JS / CSS 全部入仓库。
+
+### 8.4 TDD：先红后绿
+
+新增 `tests/test_live_range.py`（15 条测试），分两段：
+
+- **Python 契约**：`_normalize_range` 处理 None / dict / list / tuple /
+  字符串数字 / 反向边界 / clamp 越界 / 非法类型。
+- **HTML 契约**（防回归）：直接对 `frontend/live_range_slider/index.html`
+  的文本做正则检查，断言它仍然 `addEventListener('input', ...)`、仍然
+  `streamlit:setComponentValue` / `streamlit:componentReady`、且不引入任何
+  外部 `https://` / `http://` URL。
+
+第一次 `pytest tests/test_live_range.py` 因为 `src.components` 不存在直接红
+（`ModuleNotFoundError`），随后 implement → 15 全绿。
+
+### 8.5 端到端验证（Playwright）
+
+写 `scripts/verify_live_drag.py`：
+
+1. 在浏览器全局注入一个 `setComponentValue` 计数器。
+2. 通过 Playwright 找到 `live_range_slider` 的 iframe。
+3. **不**用真实鼠标拖拽，而是脚本式连续 `dispatchEvent('input')` 8 次，
+   覆盖 RSRP 滑块下界从 -130 到 -95；之间从不 `change`。
+4. 检查 `setComponentValue` 消息计数 ≥ 5（通过去重后实际 ≥ 5 即可），
+   并对比 KPI「采样点」从 baseline 到 drag 结束的差异是否 > 0。
+5. 落一张 `docs/screenshots/04_live_drag_proof.png`。
+
+实测结果：
+
+```
+baseline messages=0 KPI(采样点)=500
+setComponentValue messages during drag: 6
+KPI(采样点) after drag: 269 (was 500)
+[PASS] live drag updates confirmed end-to-end
+```
+
+→ 6 条中段 setComponentValue 消息送达 + KPI 从 500 跌到 269（其它 KPI 也
+随之变化），证明 mouseup **之前** 就完成了多次 Python rerun，bug 修复成立。
+
+### 8.6 涉及改动
+
+| 类型 | 路径 |
+|---|---|
+| 新增 | `frontend/live_range_slider/index.html` |
+| 新增 | `src/components/__init__.py` |
+| 新增 | `src/components/live_range.py` |
+| 新增 | `tests/test_live_range.py` |
+| 新增 | `scripts/verify_live_drag.py` |
+| 新增 | `docs/screenshots/04_live_drag_proof.png` |
+| 改动 | `app.py`（导入 `live_range_slider`，替换 RSRP / Download 两处 `st.slider`，sidebar caption 增加说明）|
+| 改动 | `docs/screenshots/01_overview_3d.png` / `02_2d_scatter.png` / `03_filter_narrowed.png`（重新截图，沿用新滑块视觉）|
+| 改动 | `README.md` / `AI_PROMPTS.md`（本节）|
+
+### 8.7 Tag 策略
+
+按用户要求，**不** 移动 `base-done` / `basic-done` / `advanced-done` 这三个比赛
+计时 tag：
+
+```
+base-done       → 675b099  （未变）
+basic-done      → 675b099  （未变）
+advanced-done   → e170d58  （未变）
+```
+
+只在 `main` 分支上加一条新提交并推送，让评委如果想看「比赛计时点的代码」
+和「修复后的代码」分别对应哪个 commit 都很清楚。
+
+### 8.8 验收命令（在已克隆仓库根目录下）
+
+```bash
+pytest                                  # 47 passed
+streamlit run app.py --server.address 127.0.0.1 --server.port 8501 &
+DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
+# 期望输出：[PASS] live drag updates confirmed end-to-end
+```
+
+---
+
 *— Claude Code (Opus 4.7) · 2026-05-08*

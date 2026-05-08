@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>live range slider</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0; background: transparent;
+    color: #cfe4f3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { padding: 4px 4px 10px; }
+  .header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .label { color: #9bbed1; font-size: 13px; letter-spacing: 0.3px; }
+  .value { color: #eaf6ff; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .track-wrap { position: relative; height: 28px; }
+  .track {
+    position: absolute; left: 0; right: 0; top: 12px; height: 4px;
+    background: #1e3245; border-radius: 2px;
+  }
+  .fill {
+    position: absolute; top: 12px; height: 4px;
+    background: linear-gradient(90deg, #2ecc71, #27ae60);
+    border-radius: 2px;
+    box-shadow: 0 0 6px rgba(46, 204, 113, 0.45);
+  }
+  input[type="range"] {
+    position: absolute; left: 0; right: 0; top: 0; height: 28px; width: 100%;
+    margin: 0; padding: 0;
+    -webkit-appearance: none; appearance: none;
+    background: transparent; pointer-events: none;
+  }
+  /* Only the thumb captures pointer events so both handles overlap correctly. */
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #2ecc71;
+    box-shadow: 0 0 8px rgba(46, 204, 113, 0.7);
+    cursor: pointer; pointer-events: auto;
+    border: 0;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px; height: 16px; border: 0; border-radius: 50%;
+    background: #2ecc71; cursor: pointer; pointer-events: auto;
+  }
+  input[type="range"]::-webkit-slider-runnable-track { background: transparent; }
+  input[type="range"]::-moz-range-track { background: transparent; }
+  input[type="range"]:focus { outline: none; }
+  input[type="range"]:focus::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.35),
+                0 0 8px rgba(46, 204, 113, 0.7);
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <span class="label" id="lbl">Range</span>
+      <span class="value" id="val">0 ~ 100</span>
+    </div>
+    <div class="track-wrap" id="track-wrap">
+      <div class="track"></div>
+      <div class="fill" id="fill"></div>
+      <input id="lo" type="range" aria-label="lower bound" />
+      <input id="hi" type="range" aria-label="upper bound" />
+    </div>
+  </div>
+<script>
+(function () {
+  // -------- closure state ---------------------------------------------------
+  // Defaults are overwritten by the first streamlit:render message.
+  var args = { min: 0, max: 100, low: 0, high: 100, step: 1, label: "Range" };
+  var loEl    = document.getElementById("lo");
+  var hiEl    = document.getElementById("hi");
+  var fillEl  = document.getElementById("fill");
+  var lblEl   = document.getElementById("lbl");
+  var valEl   = document.getElementById("val");
+  var lastSent = null;       // dedupe identical values across rerenders.
+  var resizeOb;
+
+  // -------- streamlit bridge ------------------------------------------------
+  function post(type, extra) {
+    var msg = { isStreamlitMessage: true, type: type };
+    if (extra) for (var k in extra) msg[k] = extra[k];
+    window.parent.postMessage(msg, "*");
+  }
+
+  function sendValue(low, high) {
+    var sig = low + ":" + high;
+    if (sig === lastSent) return;
+    lastSent = sig;
+    post("streamlit:setComponentValue", {
+      value: { low: low, high: high },
+      dataType: "json"
+    });
+  }
+
+  function setFrameHeight() {
+    post("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+  }
+
+  // -------- rendering -------------------------------------------------------
+  function fmt(n) {
+    var rounded = Math.round(n * 100) / 100;
+    return rounded.toString();
+  }
+
+  function paint(low, high) {
+    var span = args.max - args.min;
+    if (span <= 0) span = 1;
+    var lpct = ((low  - args.min) / span) * 100;
+    var hpct = ((high - args.min) / span) * 100;
+    fillEl.style.left  = lpct + "%";
+    fillEl.style.width = Math.max(0, hpct - lpct) + "%";
+    valEl.textContent  = fmt(low) + " ~ " + fmt(high);
+  }
+
+  // Drag handler: read current values, paint, push to Streamlit.
+  function onInput() {
+    var lo = Number(loEl.value);
+    var hi = Number(hiEl.value);
+    if (lo > hi) { var t = lo; lo = hi; hi = t; }
+    paint(lo, hi);
+    sendValue(lo, hi);
+  }
+
+  function applyArgs(a) {
+    if (!a) return;
+    for (var k in a) args[k] = a[k];
+    [loEl, hiEl].forEach(function (el) {
+      el.min  = args.min;
+      el.max  = args.max;
+      el.step = args.step;
+    });
+    loEl.value = args.low;
+    hiEl.value = args.high;
+    lblEl.textContent = args.label || "Range";
+    paint(Number(loEl.value), Number(hiEl.value));
+    // Don't fire setComponentValue from the render handler -- that would
+    // immediately bounce the args back and create a render loop.
+    setFrameHeight();
+  }
+
+  // -------- event wiring ----------------------------------------------------
+  // ``input`` is the key event: it fires on every value change during a
+  // drag, unlike ``change`` which only fires on mouse-up. This is the whole
+  // point of the component.
+  loEl.addEventListener("input", onInput);
+  hiEl.addEventListener("input", onInput);
+
+  window.addEventListener("message", function (event) {
+    var data = event.data;
+    if (!data || !data.type) return;
+    if (data.type === "streamlit:render") {
+      applyArgs(data.args || {});
+    }
+  });
+
+  // Keep the iframe height in sync with content.
+  if (typeof ResizeObserver !== "undefined") {
+    resizeOb = new ResizeObserver(setFrameHeight);
+    resizeOb.observe(document.body);
+  } else {
+    window.addEventListener("resize", setFrameHeight);
+  }
+
+  // Tell Streamlit the iframe is alive so it sends the first render.
+  post("streamlit:componentReady", { apiVersion: 1 });
+  setFrameHeight();
+})();
+</script>
+</body>
+</html>

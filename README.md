@@ -21,13 +21,13 @@
 - 数据概览图：**各频段基站数量**，柱状图 / 饼图一键切换
 
 ### 进阶关卡（`advanced-done`）
-- **左侧 Sidebar 联动筛选**（拖动即时刷新地图 / KPI / 图表）
+- **左侧 Sidebar 联动筛选**（拖动过程中即时刷新地图 / KPI / 图表，**真正的实时**，不是 mouseup 才刷新 — 见 §「拖动实时更新修复」）
   - 频段 Band 多选
-  - RSRP 范围 slider（dBm）
+  - RSRP 范围 slider（dBm，自研 `live_range_slider` custom component）
   - 终端类型 TerminalType 多选（`Smartphone` / `CPE` / `IoT`）
-  - 下载速率 `Download_Mbps` slider（也可智能识别 `download` /
-    `throughput` / `rate` / `速率` 关键词，找不到则回退至 `SINR_dB`
-    或 `RSRP_dBm`）
+  - 下载速率 `Download_Mbps` slider（自研 `live_range_slider`；也可智能识别
+    `download` / `throughput` / `rate` / `速率` 关键词，找不到则回退至
+    `SINR_dB` 或 `RSRP_dBm`）
 - **3D 极客体验**：`pydeck.ColumnLayer` 让信号点站起来，柱高来自下载
   速率归一化（80–1500 m），颜色仍由 RSRP 决定。可旋转 / 缩放 / 悬停
   查看 tooltip。
@@ -39,8 +39,12 @@
 - **工程化**
   - 核心逻辑拆到 `src/`（`data_loader / coloring / filters / heights`）
     四个纯函数模块，方便测试 & 复用。
-  - **32 条 pytest 单元测试** 100% 通过，覆盖：CSV 加载与列校验、RSRP
-    分级与 NaN 兜底、Sidebar 多种筛选组合、3D 高度归一化的边界情况。
+  - 自研 Streamlit custom component `src/components/live_range.py` +
+    `frontend/live_range_slider/index.html`（纯 vanilla JS / CSS，不依赖
+    外部 CDN）解决 `st.slider` 不能拖动中实时回传的根因。
+  - **47 条 pytest 单元测试** 100% 通过，覆盖：CSV 加载与列校验、RSRP
+    分级与 NaN 兜底、Sidebar 多种筛选组合、3D 高度归一化的边界情况、
+    `live_range_slider` 的值规整契约 + HTML 防回归。
   - 关键函数中文 + 英文注释齐全，遵循 `from __future__ import annotations`
     与类型提示。
 
@@ -72,7 +76,7 @@ streamlit run app.py --server.address 127.0.0.1
 
 ```bash
 pip install -r requirements.txt   # 含 pytest
-pytest                             # 期望输出：32 passed
+pytest                             # 期望输出：47 passed
 ```
 
 测试文件位于 `tests/`：
@@ -83,6 +87,15 @@ pytest                             # 期望输出：32 passed
 | `tests/test_coloring.py`    | RSRP 四档分级，NaN 兜底，`attach_color_columns` 不修改原 df |
 | `tests/test_filters.py`     | Band / RSRP / Terminal / Speed 单条与组合筛选，空多选语义 |
 | `tests/test_heights.py`     | 端点映射、线性插值、常量退化、NaN 输入、非法 bound 报错 |
+| `tests/test_live_range.py`  | 自研 `live_range_slider` 值规整契约 + HTML 防回归（`input` 事件、`setComponentValue`、不引外部 CDN） |
+
+进阶端到端验证（需要先启动 Streamlit）：
+
+```bash
+streamlit run app.py --server.address 127.0.0.1 --server.port 8501 &
+DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
+# 期望：6 条以上 setComponentValue 消息 + KPI 中段已变化 → [PASS]
+```
 
 ---
 
@@ -100,11 +113,19 @@ AI-Match/
 │   ├── data_loader.py         # CSV 加载 + 列校验 + 速率列侦测
 │   ├── coloring.py            # RSRP 四档调色（绿/黄/橙/红 + tier 标签）
 │   ├── filters.py             # 联动筛选（band / rsrp / terminal / speed）
-│   └── heights.py             # 3D 柱高归一化（NaN 安全）
-├── tests/                     # 32 条 pytest 用例
+│   ├── heights.py             # 3D 柱高归一化（NaN 安全）
+│   └── components/
+│       ├── __init__.py
+│       └── live_range.py      # 自研 Streamlit custom component（拖动实时回传）
+├── frontend/
+│   └── live_range_slider/
+│       └── index.html         # 纯 vanilla JS/CSS 双滑块 + Streamlit bridge
+├── tests/                     # 47 条 pytest 用例
 ├── data/signal_samples.csv    # 比赛数据（来源：besa-2026/code-with-ai-contest）
-├── docs/screenshots/          # 验收截图（3 张）
-├── scripts/take_screenshots.py # Playwright 截图脚本
+├── docs/screenshots/          # 验收截图（3 张 + 拖动实时刷新证据 1 张）
+├── scripts/
+│   ├── take_screenshots.py    # Playwright 截图脚本
+│   └── verify_live_drag.py    # Playwright 端到端验证拖动实时更新
 ├── AI_PROMPTS.md              # AI Coding Agent 交互日志
 └── README.md
 ```
@@ -136,6 +157,9 @@ AI-Match/
 1. `01_overview_3d.png` — 默认 3D 柱状图全景，KPI + 多色信号柱站起来
 2. `02_2d_scatter.png`  — 切换至 2D 散点模式
 3. `03_filter_narrowed.png` — 拖动 RSRP 范围 slider 后，KPI / 地图 / 图表实时刷新
+4. `04_live_drag_proof.png` — `scripts/verify_live_drag.py` 抓到的拖动「中段」状态：
+   仅触发 `input` 事件、未触发 `change`，KPI 已从 500 → 269，证明 mouseup 之前
+   已经完成多次 Python rerun（解决了原生 `st.slider` 的拖动延迟问题）。
 
 > 已知运行时小提示：截图时机器无外网访问 Carto CDN，因此底图瓦片未加载；
 > 信号点颜色与柱高均按代码逻辑正确渲染。在能访问外网的环境运行时，会
@@ -173,6 +197,28 @@ git tag --list
 
 ---
 
+## 🛠 拖动实时更新修复
+
+进阶关卡硬性要求「拖动筛选器时右侧地图和图表必须实时更新」，但 Streamlit
+原生 `st.slider` 只在 mouse-up 才会触发 Python rerun。本项目通过自研
+custom component 解决：
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| RSRP / Download slider 拖动时 map / KPI / 图表不刷新 | `st.slider` 是 BaseWeb 组件，只在 change-end 发 `widgetStateRequest` | `frontend/live_range_slider/index.html` 用 `<input type="range">` + `'input'` 事件 + `streamlit:setComponentValue` postMessage 协议，每帧把当前值送回 Python |
+
+可执行验证：
+
+```bash
+streamlit run app.py --server.address 127.0.0.1 --server.port 8501 &
+DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
+# 期望：≥ 5 条 setComponentValue 消息 + KPI 中段变化 → [PASS]
+```
+
+完整设计与 TDD 过程参见 `AI_PROMPTS.md` §8。
+
+---
+
 ## 🔧 常见问题
 
 - **Q: `streamlit` 命令找不到？** 多数情况下 `pip install --user` 安装的脚本
@@ -182,6 +228,8 @@ git tag --list
   CDN 的环境表现。可以替换 `map_style` 为 Mapbox 自定义底图（需 token）。
 - **Q: 数据被全部筛掉？** 看到「当前筛选条件下没有匹配的采样点」是
   `app.py` 的兜底空态——任何 sidebar 筛选都返回空时给出明确提示。
+- **Q: 拖动还是只在松手才刷新？** 确认浏览器没有禁用 iframe / postMessage；
+  也可以跑 `python3 scripts/verify_live_drag.py` 看是否输出 `[PASS]`。
 
 ---
 

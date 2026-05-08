@@ -35,6 +35,7 @@ from src.coloring import (
     COLOR_POOR,
     attach_color_columns,
 )
+from src.components.live_range import live_range_slider
 from src.data_loader import detect_speed_column, load_signal_samples
 from src.filters import apply_filters
 from src.heights import normalize_height
@@ -182,7 +183,10 @@ with st.sidebar:
         "<span class='pulse-dot'></span>态势筛选器</div>",
         unsafe_allow_html=True,
     )
-    st.caption("拖动控件即可联动主面板上的地图与图表")
+    st.caption(
+        "拖动控件即可联动主面板上的地图与图表（RSRP / 速率 slider 在拖动过程中"
+        "实时回传）"
+    )
 
     bands_all = sorted(full_df["Band"].unique().tolist())
     selected_bands = st.multiselect(
@@ -191,12 +195,17 @@ with st.sidebar:
 
     rsrp_min = float(full_df["RSRP_dBm"].min())
     rsrp_max = float(full_df["RSRP_dBm"].max())
-    rsrp_range = st.slider(
+    # Native st.slider only fires a rerun on mouse-up, which breaks the
+    # contest's "拖动时实时更新" rule. live_range_slider is a custom
+    # component that emits a value on every HTML 'input' event, so the
+    # map / KPI / charts refresh continuously while the user drags.
+    rsrp_range = live_range_slider(
         "RSRP 范围 (dBm)",
         min_value=float(np.floor(rsrp_min)),
         max_value=float(np.ceil(rsrp_max)),
         value=(float(np.floor(rsrp_min)), float(np.ceil(rsrp_max))),
         step=1.0,
+        key="rsrp_live",
     )
 
     terminals_all = sorted(full_df["TerminalType"].unique().tolist())
@@ -206,12 +215,13 @@ with st.sidebar:
 
     speed_min = float(full_df[SPEED_COL].min())
     speed_max = float(full_df[SPEED_COL].max())
-    speed_range = st.slider(
+    speed_range = live_range_slider(
         f"下载速率范围 ({SPEED_COL})",
         min_value=float(np.floor(speed_min)),
         max_value=float(np.ceil(speed_max)),
         value=(float(np.floor(speed_min)), float(np.ceil(speed_max))),
         step=5.0,
+        key="speed_live",
     )
 
     st.divider()
