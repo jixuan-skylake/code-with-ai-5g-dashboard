@@ -53,11 +53,15 @@
 pip install -r requirements.txt
 
 # 2. 一键启动
-streamlit run app.py
+streamlit run app.py --server.address 127.0.0.1
 ```
 
-打开浏览器访问 `http://localhost:8501`（或 Streamlit 控制台输出的端口），
+打开浏览器访问 `http://127.0.0.1:8501`（或 Streamlit 控制台输出的端口），
 即可看到态势作战室主页。
+
+如果 `http://localhost:8501` 显示「无法访问此网站」，请直接使用
+`http://127.0.0.1:8501`。少数本机代理 / DNS 工具会改写 `localhost`，
+而 `127.0.0.1` 会直连本机回环地址。
 
 > 💡 主题已在 `.streamlit/config.toml` 内置为 dark；如果你的 Streamlit
 > 版本默认浅色，请确保不要把它覆盖回 light。
@@ -136,6 +140,12 @@ AI-Match/
 > 已知运行时小提示：截图时机器无外网访问 Carto CDN，因此底图瓦片未加载；
 > 信号点颜色与柱高均按代码逻辑正确渲染。在能访问外网的环境运行时，会
 > 自动出现深色街道底图。
+
+如需按默认 8501 端口重新生成截图：
+
+```bash
+DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/take_screenshots.py
+```
 
 ---
 

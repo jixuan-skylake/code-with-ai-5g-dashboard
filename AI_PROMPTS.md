@@ -9,6 +9,105 @@
 
 ---
 
+## 0. Codex 监督 / 调度日志（用户 ↔ Codex）
+
+本节由 Codex 在 Claude Code 完成主体构建后追加，记录 Codex 作为总调度与验收者的真实交互过程。
+
+### 0.1 用户原始目标
+
+用户要求 Codex 按既有工作流推进「Code with AI 海选赛 · 5G 信号可视化看板挑战」：
+
+- 使用可见的 Claude Code 终端执行主要工程实现，不使用后台 `claude -p`。
+- 在 `/Users/skylake/Desktop/AI-Match` 中完成 Streamlit 看板、截图、测试、README、AI_PROMPTS 和 GitHub 公开仓库。
+- 完成基础与进阶关卡，并按比赛要求推送 `base-done` / `basic-done` / `advanced-done` 标签。
+- Codex 负责监督、审查、验收和最终交付；非紧急情况不中断 Claude。
+
+### 0.2 Codex 定位并派工给可见 Claude Code
+
+Codex 按用户的 Claude 调度规则执行了以下只读定位步骤：
+
+```bash
+ps -axo pid,ppid,stat,etime,command | rg 'claude --dangerously-skip-permissions|claude($| )'
+ps -p 31401 -o pid,ppid,tty,stat,etime,command
+lsof -a -p 31401 -d cwd
+osascript -e 'tell application "Terminal" to get the tty of every tab of every window'
+```
+
+确认目标会话为：
+
+- PID：`31401`
+- TTY：`/dev/ttys004`
+- 工作目录：`/Users/skylake/Desktop/AI-Match`
+- Terminal：`window 1 / tab 1`
+- 标题：Claude Code
+
+随后 Codex 用 Terminal AppleScript 的 `do script ... in tab 1 of window 1` 把完整比赛任务书发送给该 Claude Code 会话，并在没有进入执行状态时补发一次 Return。成功信号是 Claude Code 进入 `Thinking / tool call` 状态。
+
+### 0.3 过程中的用户补充要求
+
+用户在 Claude 工作期间追加了三条要求，Codex 均记录并纳入最终验收：
+
+1. 「不需要，你等待claude工作吧，不要过份干预」
+   - Codex 改为低频观察，只在 Claude 完成关键阶段后读取状态，不再追加实现指令。
+
+2. 「后面的验收也是需要你去打开浏览器查看的哈，不要忘记了」
+   - Codex 将浏览器真实验收加入最终检查项：本地启动 Streamlit，打开浏览器观察页面，而不是只信任测试或截图。
+
+3. 「AI_PROMPT.md文件在他写完以后你也要继续写入你的，把我们的对话记录加在上面」
+   - Claude 写完本文件后，Codex 追加本节，记录 Codex 的派工、等待、监督、浏览器验收计划和最终启动说明。
+
+4. 「你需要告诉我怎么启动这个项目，我也需要自己去浏览器打开运行查看效果」
+   - Codex 将启动方式写入最终交付说明：`cd /Users/skylake/Desktop/AI-Match && streamlit run app.py`，浏览器访问 `http://localhost:8501`。
+
+### 0.4 Codex 监督节点摘要
+
+Codex 在不干扰 Claude 主流程的前提下观察到以下关键节点：
+
+- Claude 成功拉取比赛数据，并识别 CSV 含 `Download_Mbps` 字段。
+- Claude 先完成基础版提交，打 `base-done` 和 `basic-done` 两个兼容标签。
+- Claude 完成进阶版：sidebar 联动筛选、3D 柱状地图、KPI、图表切换、CSS 动效、测试模块。
+- Claude 执行 `pytest`，结果为 `32 passed`。
+- Claude 启动 Streamlit，`/_stcore/health` 返回 HTTP 200。
+- Claude 生成 3 张运行截图到 `docs/screenshots/`。
+- Claude 新建公开仓库 `jixuan-skylake/code-with-ai-5g-dashboard`，推送 `main` 和全部比赛标签。
+
+### 0.5 Codex 后续验收计划
+
+Claude 完成后，Codex 继续执行以下独立验收，不把 Claude 的完成报告直接当作最终结论：
+
+- 复查 `git status`、remote、提交和 tag。
+- 追加本 Codex 监督日志并单独提交到 `main`，不移动已经用于比赛计时的 `advanced-done` tag。
+- 本地重新运行 `pytest`。
+- 本地启动 `streamlit run app.py`。
+- 通过浏览器打开本地页面，检查 sidebar、KPI、3D 地图、图表和交互筛选是否可见可用。
+- 把启动命令和仓库地址在最终回复中明确给用户。
+
+### 0.6 本地访问问题排查
+
+用户反馈浏览器里 `localhost` 显示「无法访问此网站」。Codex 排查后确认：
+
+- 当时没有任何 `streamlit run app.py` 进程在运行。
+- `8501` 和 `8765` 端口都没有监听者。
+- 日志中的 `Stopping...` 来自验收脚本结束时主动停止临时 Streamlit 服务。
+
+Codex 随后在一个新的可见 Terminal 窗口中启动：
+
+```bash
+cd /Users/skylake/Desktop/AI-Match
+export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+streamlit run app.py --server.port 8501 --server.address 127.0.0.1 --browser.gatherUsageStats false
+```
+
+验证结果：
+
+- `curl http://127.0.0.1:8501/_stcore/health` 返回 HTTP 200。
+- `lsof` 显示 Python 正在监听 `127.0.0.1:8501`。
+- 使用 `DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/take_screenshots.py` 成功重新生成 3 张截图。
+
+最终给用户的本机访问地址为：`http://127.0.0.1:8501`。
+
+---
+
 ## 1. 任务派工：用户 → Claude Code
 
 时间：2026-05-08 · 工作目录：`/Users/skylake/Desktop/AI-Match`

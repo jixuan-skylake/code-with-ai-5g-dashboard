@@ -70,15 +70,16 @@ st.markdown(
           radial-gradient(1000px 600px at 100% 0%, rgba(231,76,60,0.06), transparent 55%),
           linear-gradient(180deg, #06101c 0%, #0a1421 50%, #06101c 100%);
       }
-      .block-container { padding-top: 1.0rem; padding-bottom: 2rem; }
+      .block-container { padding-top: 2.2rem; padding-bottom: 2rem; }
       h1, h2, h3 { color: #eaf6ff; letter-spacing: 0.5px; }
       .nav-title {
         font-size: 1.9rem; font-weight: 700; color: #eaf6ff;
+        line-height: 1.35; padding-top: 0.15rem; margin-bottom: 0.15rem;
         text-shadow: 0 0 18px rgba(46, 204, 113, 0.45);
         animation: fadeInDown 0.7s ease-out both;
       }
       .nav-sub  {
-        color: #9bbed1; font-size: 0.95rem; margin-top: -0.3rem;
+        color: #9bbed1; font-size: 0.95rem; line-height: 1.45; margin-top: 0;
         animation: fadeInDown 0.9s ease-out both;
       }
       .pulse-dot {
@@ -95,7 +96,7 @@ st.markdown(
       .kpi-card {
         background: var(--panel-bg);
         border: 1px solid var(--panel-border);
-        border-radius: 14px;
+        border-radius: 8px;
         padding: 14px 18px;
         backdrop-filter: blur(6px);
         animation: fadeInUp 0.6s ease-out both;
@@ -123,7 +124,7 @@ st.markdown(
       .stTabs [data-baseweb="tab-list"] { gap: 6px; }
       .stTabs [data-baseweb="tab"] {
         background: rgba(17, 36, 58, 0.5);
-        border-radius: 10px 10px 0 0;
+        border-radius: 8px 8px 0 0;
         padding: 8px 16px;
       }
       .stTabs [aria-selected="true"] {
@@ -142,6 +143,13 @@ st.markdown(
       @keyframes fadeInUp {
         from { opacity: 0; transform: translateY(8px); }
         to   { opacity: 1; transform: translateY(0); }
+      }
+      @media (max-width: 1100px) {
+        .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 700px) {
+        .kpi-grid { grid-template-columns: 1fr; }
+        .nav-title { font-size: 1.45rem; }
       }
     </style>
     """,

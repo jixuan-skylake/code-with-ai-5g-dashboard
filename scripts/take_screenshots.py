@@ -1,7 +1,8 @@
 """Render dashboard screenshots via headless Chromium (Playwright).
 
 This is a one-shot helper -- it expects a Streamlit dev server to be
-already running on ``http://localhost:8765``. Outputs land in
+already running on ``http://localhost:8765`` by default. Override with
+``DASHBOARD_URL`` when using another port. Outputs land in
 ``docs/screenshots/``. Three captures by default:
 
 1. ``01_overview_3d.png`` -- default 3D pillar view at full window.
@@ -13,6 +14,7 @@ already running on ``http://localhost:8765``. Outputs land in
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -21,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "docs" / "screenshots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-URL = "http://localhost:8765/"
+URL = os.environ.get("DASHBOARD_URL", "http://localhost:8765/")
 VIEWPORT = {"width": 1600, "height": 1000}
 
 
@@ -35,7 +37,9 @@ def main() -> int:
         ctx = browser.new_context(viewport=VIEWPORT, device_scale_factor=2)
         page = ctx.new_page()
 
-        page.goto(URL, wait_until="networkidle", timeout=30000)
+        # Streamlit keeps websocket/runtime requests open, so ``networkidle``
+        # can be flaky. DOM ready plus the dashboard title is the stable signal.
+        page.goto(URL, wait_until="domcontentloaded", timeout=30000)
         _wait_for_streamlit(page, "5G 信号态势作战室")
         # Give pydeck's ColumnLayer a moment to finish WebGL init.
         page.wait_for_timeout(3500)
