@@ -11,7 +11,7 @@
 
 ## ✨ 功能一览
 
-### 基础关卡（`basic-done` / `base-done`）
+### 基础关卡（`basic-done`）
 - **pandas** 读取 `data/signal_samples.csv`（500 行 × 8 字段）
 - **pydeck** 交互地图：每个采样点按 `RSRP_dBm` 信号强度变色
   - `> -90 dBm` → 绿色（优）
@@ -184,13 +184,11 @@ DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/take_screenshots.py
 
 | Tag | 含义 | Commit |
 |---|---|---|
-| `base-done` | 基础关卡完成（用户偏好用此名） | 见 `git log` |
-| `basic-done` | 与 `base-done` 等价的兼容标签（赛题文案写法） | 同上 |
+| `basic-done` | 基础关卡完成：pandas 加载 + RSRP 变色地图 + 频段统计图 | 见 `git log` |
 | `advanced-done` | 进阶关卡完成（含 sidebar / 3D / 测试 / 截图） | 见 `git log` |
 
 ```bash
 git tag --list
-# base-done
 # basic-done
 # advanced-done
 ```
