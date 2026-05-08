@@ -30,8 +30,9 @@ on every reload.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
+import streamlit as st
 import streamlit.components.v1 as components
 
 _FRONTEND_DIR = (
@@ -89,6 +90,35 @@ def _normalize_range(
     return (lo, hi)
 
 
+def _resolve_initial_value(
+    prior: Any,
+    default_value: Optional[Tuple[float, float]],
+    min_value: float,
+    max_value: float,
+) -> Tuple[float, float]:
+    """Decide what (low, high) to send the iframe as ``args.low/high``.
+
+    Pure helper, factored out so unit tests can pin down the policy
+    without booting a Streamlit ScriptRunContext:
+
+    * If ``prior`` (the user's most recently committed value, normally
+      pulled out of ``st.session_state[key]``) is provided, use it. This
+      is the bug fix that keeps the handle from snapping back to the
+      original default on every rerun.
+    * Otherwise honor the caller-supplied ``default_value``.
+    * Otherwise span the full ``[min_value, max_value]`` range.
+
+    All three branches go through ``_normalize_range`` so the result is
+    always clamped to current bounds (covers the case where a filter
+    elsewhere on the page has shrunk the slider's domain).
+    """
+    if prior is not None:
+        return _normalize_range(prior, min_value, max_value)
+    if default_value is None:
+        return (float(min_value), float(max_value))
+    return _normalize_range(default_value, min_value, max_value)
+
+
 def live_range_slider(
     label: str,
     min_value: float,
@@ -105,10 +135,25 @@ def live_range_slider(
     ``max_value``/``value``/``step``/``key`` you'd pass to ``st.slider``.
 
     Returns ``(low, high)`` as a tuple of floats.
+
+    Sticky state: when ``key`` is provided, Streamlit's widget machinery
+    auto-stores the latest committed value in ``st.session_state[key]``.
+    We read that on the next rerun and feed it back to the iframe so the
+    handle keeps the user's drag position rather than snapping to the
+    initial ``value`` default.
     """
-    if value is None:
-        value = (min_value, max_value)
-    lo0, hi0 = float(value[0]), float(value[1])
+    # Pull the most recent committed value, if any, before deciding what
+    # to render. Wrapped in a try because session_state access requires a
+    # ScriptRunContext which is missing in unit-test imports.
+    prior = None
+    if key:
+        try:
+            if key in st.session_state:
+                prior = st.session_state[key]
+        except Exception:
+            prior = None
+
+    lo0, hi0 = _resolve_initial_value(prior, value, min_value, max_value)
 
     raw = _component_func(
         label=label,

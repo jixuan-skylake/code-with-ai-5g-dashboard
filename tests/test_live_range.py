@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from src.components.live_range import _normalize_range
+from src.components.live_range import _normalize_range, _resolve_initial_value
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_HTML = PROJECT_ROOT / "frontend" / "live_range_slider" / "index.html"
@@ -113,3 +113,80 @@ class TestFrontendHTMLContract:
         assert hits >= 2, (
             "frontend must render two range inputs for the dual-handle slider"
         )
+
+    def test_skips_input_value_overwrite_while_dragging(self):
+        """Defense against mid-drag stutter: when a rerun lands in the
+        middle of an active drag, ``applyArgs`` must NOT overwrite
+        ``input.value`` -- otherwise the handle visibly snaps to whatever
+        Python sent.
+        """
+        content = FRONTEND_HTML.read_text(encoding="utf-8")
+        # Look for evidence of drag-state tracking + a guard around the
+        # input.value assignment in applyArgs.
+        assert "dragging" in content, (
+            "frontend must track an in-progress drag flag"
+        )
+        assert "pointerdown" in content or "mousedown" in content, (
+            "frontend must observe pointer/mouse-down to enter drag state"
+        )
+
+
+# -----------------------------------------------------------------------------
+# Sticky-state contract: rerun must show the user's last committed value,
+# not snap the handle back to the initial default.
+# -----------------------------------------------------------------------------
+class TestResolveInitialValue:
+    """The bug fix: ``_resolve_initial_value`` decides what to send the iframe
+    as ``args.low/high`` on each render. If a prior committed value is
+    available (the wrapper plucks it from ``st.session_state[key]``), use
+    it -- otherwise fall back to the explicit ``value`` param, otherwise
+    the full range. Without this, every rerun would re-send the default
+    and the iframe would snap the handle back to the initial position.
+    """
+
+    def test_prior_wins_over_default(self):
+        # The crucial case: user dragged high handle to 700; the prior
+        # committed value is (0, 700); on the next render we MUST send
+        # (0, 700) as args, not the original default (0, 998).
+        out = _resolve_initial_value(
+            prior={"low": 0, "high": 700},
+            default_value=(0, 998),
+            min_value=0,
+            max_value=998,
+        )
+        assert out == (0.0, 700.0)
+
+    def test_no_prior_uses_default(self):
+        out = _resolve_initial_value(
+            prior=None, default_value=(50, 70), min_value=0, max_value=100
+        )
+        assert out == (50.0, 70.0)
+
+    def test_no_prior_no_default_uses_full_range(self):
+        out = _resolve_initial_value(
+            prior=None, default_value=None, min_value=0, max_value=100
+        )
+        assert out == (0.0, 100.0)
+
+    def test_prior_clamped_when_bounds_shrink(self):
+        # If the dataframe filter narrows the slider's bounds between
+        # renders, an out-of-range prior must be clamped, not preserved
+        # verbatim.
+        out = _resolve_initial_value(
+            prior={"low": -5, "high": 200},
+            default_value=(0, 100),
+            min_value=0,
+            max_value=100,
+        )
+        assert out == (0.0, 100.0)
+
+    def test_prior_accepts_tuple_shape(self):
+        # In case Streamlit ever serializes the keyed value back as a
+        # tuple/list, the resolver must still cope.
+        out = _resolve_initial_value(
+            prior=(10, 20),
+            default_value=(0, 100),
+            min_value=0,
+            max_value=100,
+        )
+        assert out == (10.0, 20.0)

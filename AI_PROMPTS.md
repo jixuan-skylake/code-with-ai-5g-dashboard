@@ -389,4 +389,96 @@ DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
 
 ---
 
+## 9. 后续修复 #2：拖动结束后 slider 手柄弹回初始值
+
+### 9.1 用户的 bug 报告（原文）
+
+> 用户发现实时 slider 的第二个 bug：拖动 RSRP 或下载速率双滑条时，数据
+> 确实按中间值更新，但滑块手柄会在 rerun 后弹回初始最大值/初始位置。
+> 例如把下载速率最大值拖到 700 多，地图/柱状图按 700 多过滤了，但
+> slider 文案/手柄又显示 998 最大值。
+
+### 9.2 系统化根因分析
+
+把 §8 修好的链路再过一遍，找出弹回点：
+
+1. 用户拖动 → iframe `onInput` → `setComponentValue({low:0, high:700})`。
+2. Streamlit 触发 rerun，Python 脚本从头执行。
+3. `app.py` 调 `live_range_slider("速率", value=(speed_min, speed_max), key="speed_live")`
+   ——`value` 永远是固定的 `(0, 998)`！
+4. wrapper 把 `low=0, high=998` 当 args 传给 `_component_func`。
+5. `_component_func` 把 `streamlit:render(args.low=0, args.high=998)` 投递给 iframe。
+6. iframe `applyArgs` 不带条件地执行 `loEl.value = args.low; hiEl.value = args.high`，
+   把刚被用户拖到 700 的输入框写回 998 → **手柄弹回**。
+7. 与此同时 `_component_func` 返回 `{low:0, high:700}`（用户最新值）；
+   `_normalize_range` 给 Python 端的 `(0, 700)`，下游 `apply_filters` 用 700 过滤。
+   这就是「数据按 700，滑块显示 998」的两层不同步。
+
+关键之处：步骤 4 拿到 `args.low/high` 时，wrapper **还没**「读到」用户的
+最新值——`_component_func` 必须先调用才能拿到返回值。看似无解。
+
+突破口：Streamlit 的 widget 协议会**在 rerun 启动前**就把 keyed 组件的
+最新 commit 值塞进 `st.session_state[key]`（custom component 走的也是
+`register_widget` 这条公共路径）。所以在调 `_component_func` 之**前**就
+能从 `st.session_state["speed_live"]` 里拿到 `{low:0, high:700}`，把它当
+`low/high` 传出去就行。
+
+第二层加固：即便 Python 把正确的 args 送回去，万一 rerun 落在用户**正
+在拖**的中间帧（mousemove 速率 ≥ 60Hz，rerun 也很快），iframe 仍会用
+args 写回 input.value，造成 thumb 抖动。所以 JS 侧再加一道防御：当
+`dragging=true` 时跳过 `applyArgs` 的 input.value 写入。
+
+### 9.3 修复
+
+| 文件 | 改动 |
+|---|---|
+| `src/components/live_range.py` | 新增纯函数 `_resolve_initial_value(prior, default_value, min, max)`：prior 优先、bounds 自动 clamp、不修改原值。`live_range_slider` 在调 `_component_func` 之前先 `st.session_state.get(key)` 拿 prior，传给 `_resolve_initial_value` 决定要送 iframe 的 `low/high` |
+| `frontend/live_range_slider/index.html` | 加 `dragging` 状态变量，监听 `pointerdown / mousedown / touchstart / pointerup / mouseup / touchend / blur`（含 window 级，处理「鼠标拖出 iframe 后释放」），`applyArgs` 中包一层 `if (!dragging) { loEl.value = args.low; hiEl.value = args.high; }` |
+| `tests/test_live_range.py` | 新增 6 条断言：`_resolve_initial_value` 的 prior-wins、no-prior-uses-default、no-prior-no-default-uses-full-range、prior-clamped-when-bounds-shrink、prior-accepts-tuple-shape；HTML 文本里必须出现 `dragging` + `pointerdown\|mousedown` |
+| `scripts/verify_live_drag.py` | 第 3 项断言：drag 完成后重新定位 iframe，读 `loEl.value / hiEl.value`，对比 `window.__sliderMessages` 里最后一条 payload，差值 ≤ 1.5（slider step 容差）才算通过 |
+
+### 9.4 TDD 红→绿
+
+```
+$ pytest tests/test_live_range.py
+ImportError: cannot import name '_resolve_initial_value' from 'src.components.live_range'
+
+# 实现 _resolve_initial_value + dragging 防御后再跑：
+$ pytest tests/test_live_range.py
+21 passed in 0.20s
+
+$ pytest
+53 passed in 0.41s   # 原 47 + sticky 6 条
+```
+
+### 9.5 端到端 Playwright 验证
+
+```
+$ DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
+baseline messages=0 KPI(采样点)=500
+setComponentValue messages during drag: 6
+KPI(采样点) after drag: 269 (was 500)
+final iframe handles: lo=-95 hi=-70
+last setComponentValue payload: {'low': -95, 'high': -70}
+proof screenshot -> /Users/skylake/Desktop/AI-Match/docs/screenshots/04_live_drag_proof.png
+[PASS] live drag updates confirmed end-to-end (input events + KPI rerun + iframe handle stays synced)
+```
+
+三项契约同时通过：① ≥ 5 条 `setComponentValue`；② KPI 500 → 269；
+③ iframe 手柄值 `(-95, -70)` 与最后一次推送 `{low: -95, high: -70}`
+**完全一致**。手柄不再弹回。
+
+### 9.6 Tag 策略（同 §8）
+
+`basic-done` / `advanced-done` 计时 tag 仍指向比赛原始 commit，未移动；
+本次只在 `main` 上加一条新提交。
+
+```
+basic-done    -> 675b099  （未变）
+advanced-done -> e170d58  （未变）
+HEAD          -> <new>    （sticky-state 修复）
+```
+
+---
+
 *— Claude Code (Opus 4.7) · 2026-05-08*

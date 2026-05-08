@@ -42,9 +42,10 @@
   - 自研 Streamlit custom component `src/components/live_range.py` +
     `frontend/live_range_slider/index.html`（纯 vanilla JS / CSS，不依赖
     外部 CDN）解决 `st.slider` 不能拖动中实时回传的根因。
-  - **47 条 pytest 单元测试** 100% 通过，覆盖：CSV 加载与列校验、RSRP
+  - **53 条 pytest 单元测试** 100% 通过，覆盖：CSV 加载与列校验、RSRP
     分级与 NaN 兜底、Sidebar 多种筛选组合、3D 高度归一化的边界情况、
-    `live_range_slider` 的值规整契约 + HTML 防回归。
+    `live_range_slider` 的值规整契约 + HTML 防回归 + 拖动后手柄持久化
+    （`_resolve_initial_value`）。
   - 关键函数中文 + 英文注释齐全，遵循 `from __future__ import annotations`
     与类型提示。
 
@@ -76,7 +77,7 @@ streamlit run app.py --server.address 127.0.0.1
 
 ```bash
 pip install -r requirements.txt   # 含 pytest
-pytest                             # 期望输出：47 passed
+pytest                             # 期望输出：53 passed
 ```
 
 测试文件位于 `tests/`：
@@ -87,14 +88,15 @@ pytest                             # 期望输出：47 passed
 | `tests/test_coloring.py`    | RSRP 四档分级，NaN 兜底，`attach_color_columns` 不修改原 df |
 | `tests/test_filters.py`     | Band / RSRP / Terminal / Speed 单条与组合筛选，空多选语义 |
 | `tests/test_heights.py`     | 端点映射、线性插值、常量退化、NaN 输入、非法 bound 报错 |
-| `tests/test_live_range.py`  | 自研 `live_range_slider` 值规整契约 + HTML 防回归（`input` 事件、`setComponentValue`、不引外部 CDN） |
+| `tests/test_live_range.py`  | 自研 `live_range_slider` 值规整契约 + HTML 防回归（`input` 事件、`setComponentValue`、不引外部 CDN）+ sticky 状态解析（`_resolve_initial_value`：prior 优先、bounds clamp）+ JS 拖动状态防御 |
 
 进阶端到端验证（需要先启动 Streamlit）：
 
 ```bash
 streamlit run app.py --server.address 127.0.0.1 --server.port 8501 &
 DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
-# 期望：6 条以上 setComponentValue 消息 + KPI 中段已变化 → [PASS]
+# 期望：6 条以上 setComponentValue 消息 + KPI 中段已变化 + iframe 手柄值
+# 与最后一次 setComponentValue 完全一致 → [PASS]
 ```
 
 ---
@@ -120,7 +122,7 @@ AI-Match/
 ├── frontend/
 │   └── live_range_slider/
 │       └── index.html         # 纯 vanilla JS/CSS 双滑块 + Streamlit bridge
-├── tests/                     # 47 条 pytest 用例
+├── tests/                     # 53 条 pytest 用例
 ├── data/signal_samples.csv    # 比赛数据（来源：besa-2026/code-with-ai-contest）
 ├── docs/screenshots/          # 验收截图（3 张 + 拖动实时刷新证据 1 张）
 ├── scripts/
@@ -199,21 +201,23 @@ git tag --list
 
 进阶关卡硬性要求「拖动筛选器时右侧地图和图表必须实时更新」，但 Streamlit
 原生 `st.slider` 只在 mouse-up 才会触发 Python rerun。本项目通过自研
-custom component 解决：
+custom component 解决，分两个 bug：
 
 | 问题 | 根因 | 修复 |
 |---|---|---|
 | RSRP / Download slider 拖动时 map / KPI / 图表不刷新 | `st.slider` 是 BaseWeb 组件，只在 change-end 发 `widgetStateRequest` | `frontend/live_range_slider/index.html` 用 `<input type="range">` + `'input'` 事件 + `streamlit:setComponentValue` postMessage 协议，每帧把当前值送回 Python |
+| 数据按拖动值更新，但 slider 手柄在 rerun 后弹回初始最大值 | 每次 rerun，Python 用固定 `value=(min, max)` 调 `live_range_slider`，iframe `applyArgs` 又把 input.value 写回初始值 | Python 端 `_resolve_initial_value` 优先从 `st.session_state[key]` 读最近 commit 值送给 iframe；JS 端在 `dragging=true` 时跳过 `applyArgs` 的 input 写入 |
 
-可执行验证：
+可执行验证（覆盖三个契约：input 事件 / KPI 跟随 / 手柄不弹回）：
 
 ```bash
 streamlit run app.py --server.address 127.0.0.1 --server.port 8501 &
 DASHBOARD_URL=http://127.0.0.1:8501/ python3 scripts/verify_live_drag.py
-# 期望：≥ 5 条 setComponentValue 消息 + KPI 中段变化 → [PASS]
+# 期望：≥ 5 条 setComponentValue 消息 + KPI 中段变化 + iframe 手柄值与最后
+# 一次 setComponentValue 完全一致 → [PASS]
 ```
 
-完整设计与 TDD 过程参见 `AI_PROMPTS.md` §8。
+完整设计与 TDD 过程参见 `AI_PROMPTS.md` §8 / §9。
 
 ---
 

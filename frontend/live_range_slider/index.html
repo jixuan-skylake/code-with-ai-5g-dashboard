@@ -83,6 +83,7 @@
   var lblEl   = document.getElementById("lbl");
   var valEl   = document.getElementById("val");
   var lastSent = null;       // dedupe identical values across rerenders.
+  var dragging = false;      // suppress applyArgs writes during active drag.
   var resizeOb;
 
   // -------- streamlit bridge ------------------------------------------------
@@ -139,8 +140,18 @@
       el.max  = args.max;
       el.step = args.step;
     });
-    loEl.value = args.low;
-    hiEl.value = args.high;
+    // Sticky-state defense: while the user is actively dragging a handle,
+    // do NOT overwrite the input value with whatever Python sent in the
+    // mid-drag rerun -- otherwise the thumb visibly snaps to the rerun's
+    // value and then jumps back on the next mousemove. The Python wrapper
+    // already feeds the latest committed value into args on the *next*
+    // rerun via st.session_state[key], so by the time dragging is false
+    // again args.low/high == the user's last committed value and the
+    // handle position stays put.
+    if (!dragging) {
+      loEl.value = args.low;
+      hiEl.value = args.high;
+    }
     lblEl.textContent = args.label || "Range";
     paint(Number(loEl.value), Number(hiEl.value));
     // Don't fire setComponentValue from the render handler -- that would
@@ -154,6 +165,28 @@
   // point of the component.
   loEl.addEventListener("input", onInput);
   hiEl.addEventListener("input", onInput);
+
+  // Drag-state tracking so applyArgs can refuse to overwrite input.value
+  // while a handle is being dragged. We listen on both pointer and mouse
+  // events for cross-browser coverage, and on the window for "release
+  // outside the iframe" cases (browsers fire mouseup on window when the
+  // pointer leaves the input during a drag).
+  function startDrag() { dragging = true; }
+  function endDrag()   { dragging = false; }
+  [loEl, hiEl].forEach(function (el) {
+    el.addEventListener("pointerdown", startDrag);
+    el.addEventListener("mousedown", startDrag);
+    el.addEventListener("touchstart", startDrag, { passive: true });
+    el.addEventListener("pointerup", endDrag);
+    el.addEventListener("mouseup", endDrag);
+    el.addEventListener("touchend", endDrag);
+    el.addEventListener("blur", endDrag);
+  });
+  window.addEventListener("pointerup", endDrag);
+  window.addEventListener("mouseup", endDrag);
+  window.addEventListener("touchend", endDrag);
+  window.addEventListener("touchcancel", endDrag);
+  window.addEventListener("blur", endDrag);
 
   window.addEventListener("message", function (event) {
     var data = event.data;

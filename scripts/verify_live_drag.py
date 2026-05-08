@@ -2,19 +2,25 @@
 
 Runs against an already-running Streamlit dev server (default
 ``http://127.0.0.1:8501``). Drives synthetic ``input`` events on the
-RSRP live-range slider's lower handle, and asserts:
+RSRP live-range slider's lower handle, and asserts THREE things:
 
 1. ``setComponentValue`` postMessages are emitted multiple times during
-   the drag (i.e. before mouse-up).
+   the drag (i.e. before mouse-up) -- proves the iframe is wired to the
+   ``input`` event, not ``change``.
 2. The dashboard's KPI value reacts to the intermediate values --
-   proving that Streamlit reran Python from each in-drag value, not
+   proves that Streamlit reran Python from each in-drag value, not
    just from a final mouse-up.
+3. After the drag completes and Streamlit has settled, the iframe's
+   displayed handle value matches the LAST setComponentValue payload.
+   This pins down the second bug: without sticky state, the iframe
+   would snap the handle back to the initial default on every rerun
+   even though the underlying filter applied the user's value.
 
 Saves a screenshot of the page mid-drag to
 ``docs/screenshots/04_live_drag_proof.png`` so the proof can be
 inspected by hand later.
 
-Exit code 0 = both checks pass; non-zero = check failed (with a
+Exit code 0 = all three checks pass; non-zero = check failed (with a
 human-readable reason on stderr).
 """
 
@@ -122,6 +128,28 @@ def main() -> int:
         print(f"setComponentValue messages during drag: {msg_delta}")
         print(f"KPI(采样点) after drag: {kpi_after} (was {baseline_kpi})")
 
+        # Sticky-state check: after drag + rerun, the iframe's displayed
+        # handle value MUST match the last committed value. If not, the
+        # bug from issue #2 is back: visual position desynced from filter
+        # state. Streamlit may have rerun the iframe-bearing block, so we
+        # have to re-locate the frame here -- the earlier ``frame`` may
+        # be stale.
+        live_frame = _find_live_slider_frame(page)
+        if live_frame is None:
+            print("[FAIL] live_range_slider iframe not found after drag", file=sys.stderr)
+            return 1
+        final_lo = live_frame.evaluate(
+            "() => Number(document.getElementById('lo').value)"
+        )
+        final_hi = live_frame.evaluate(
+            "() => Number(document.getElementById('hi').value)"
+        )
+        last_msg = page.evaluate(
+            "() => window.__sliderMessages[window.__sliderMessages.length - 1] || null"
+        )
+        print(f"final iframe handles: lo={final_lo} hi={final_hi}")
+        print(f"last setComponentValue payload: {last_msg}")
+
         # Capture proof screenshot.
         out_path = OUT_DIR / "04_live_drag_proof.png"
         page.screenshot(path=str(out_path), full_page=True)
@@ -136,13 +164,32 @@ def main() -> int:
             problems.append(
                 "KPI did not change during drag -- Streamlit may not be rerunning from input events"
             )
+        if last_msg is None:
+            problems.append("no setComponentValue payload was recorded")
+        else:
+            expected_lo = float(last_msg["low"])
+            expected_hi = float(last_msg["high"])
+            tol = 1.5  # tolerance for slider step rounding
+            if abs(float(final_lo) - expected_lo) > tol:
+                problems.append(
+                    f"iframe LOW handle snapped back to {final_lo} instead of {expected_lo} "
+                    "(sticky-state bug)"
+                )
+            if abs(float(final_hi) - expected_hi) > tol:
+                problems.append(
+                    f"iframe HIGH handle snapped back to {final_hi} instead of {expected_hi} "
+                    "(sticky-state bug)"
+                )
 
         browser.close()
 
         if problems:
             print("[FAIL] " + "; ".join(problems), file=sys.stderr)
             return 1
-        print("[PASS] live drag updates confirmed end-to-end")
+        print(
+            "[PASS] live drag updates confirmed end-to-end "
+            "(input events + KPI rerun + iframe handle stays synced)"
+        )
         return 0
 
 
